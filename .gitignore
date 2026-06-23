@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+output/
+features.parquet
+node_modules/
+frontend/.next/
+.env
+# Keep these tracked even though build artifacts are ignored above:
+!pickle/
+!pickle/model.pkl
+!data/
+!data/sample/
