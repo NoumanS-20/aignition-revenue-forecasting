@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.pkl binary
+*.parquet binary
+*.png binary
+*.jpg binary
