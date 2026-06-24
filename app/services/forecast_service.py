@@ -8,8 +8,10 @@ from forecast_core.config import get_rng, PAID_CHANNELS
 class ForecastService:
     def __init__(self, model_path: str):
         self.fc = BayesianForecaster.load(model_path)
-        self.series_meta = {s["campaign"]: {"channel": s["channel"],
-                                            "campaign_type": s["campaign_type"]}
+        self.series_meta = {f'{s["channel"]}::{s["campaign"]}':
+                            {"channel": s["channel"],
+                             "campaign_type": s["campaign_type"],
+                             "campaign": s["campaign"]}
                             for s in self.fc.model.series}
 
     def _agg(self, horizon, budget_plan):

@@ -7,7 +7,7 @@ dependency-light pickled predictor. A shared `forecast_core` package is consumed
 by two tracks so they can never drift apart:
 
 ```
-            input data/ (GA4 + Shopify csv)        train.py (PyMC, offline, once)
+        input data/ (Google/Microsoft/Meta ads csv)   train.py (PyMC, offline, once)
                         |                                   |
                         |                                   v
                         |                            pickle/model.pkl

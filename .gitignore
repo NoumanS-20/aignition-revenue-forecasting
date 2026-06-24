@@ -12,3 +12,5 @@ frontend/.next/
 !pickle/model.pkl
 !data/
 !data/sample/
+
+.playwright-mcp/

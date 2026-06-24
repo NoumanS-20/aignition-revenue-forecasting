@@ -6,6 +6,10 @@ An AI-assisted forecasting utility for e-commerce marketing. It produces
 **budget-scenario simulation** via saturation response curves, and generates
 **AI causal insights** with Anthropic Claude.
 
+**Inputs:** ad-platform performance exports — Google Ads, Microsoft (Bing) Ads,
+and Meta Ads — with spend and conversion value per campaign. All amounts in
+**USD**. (GA4 and Shopify files are not used.)
+
 - **Python:** 3.11+ (developed and tested on 3.12).
 - **Scored pipeline is fully offline** — no network access required at run time.
 

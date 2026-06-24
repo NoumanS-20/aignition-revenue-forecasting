@@ -8,33 +8,41 @@ LEVELS: tuple[str, ...] = ("total", "channel", "campaign_type", "campaign")
 METRICS: tuple[str, ...] = ("revenue", "roas")
 QUANTILES: tuple[float, ...] = (0.10, 0.50, 0.90)
 
-# Assumed source-column names. Editing this dict adapts ingestion to the
-# real dataset without touching ingest logic.
-COLUMN_MAP: dict[str, dict[str, list[str]]] = {
-    "ga4": {
-        "date": ["date", "event_date", "ga_date"],
-        "source": ["source", "sessionSource", "session_source"],
-        "medium": ["medium", "sessionMedium", "session_medium"],
-        "campaign": ["campaign", "campaignName", "campaign_name"],
-        "revenue": ["revenue", "purchaseRevenue", "totalRevenue"],
-        "conversions": ["conversions", "transactions", "purchases"],
-        "spend": ["spend", "cost", "adCost"],
-    },
-    "shopify": {
-        "date": ["date", "order_date", "created_at"],
-        "revenue": ["revenue", "total_sales", "gross_sales"],
-        "orders": ["orders", "order_count"],
-    },
+# All monetary values are USD (per organizer clarification).
+CURRENCY: str = "USD"
+
+# Candidate source-column names for ad-platform exports
+# (Google Ads, Microsoft/Bing Ads, Meta Ads). Per the organizer Q&A the inputs
+# are the ad platforms' spend/performance data -- GA4 and Shopify are NOT used.
+# Editing this dict adapts ingestion to the real dataset without touching logic.
+COLUMN_MAP: dict[str, list[str]] = {
+    "date": ["date", "day", "report_date", "week", "month"],
+    "channel": ["channel", "platform", "source", "account", "ad_network", "network"],
+    "campaign": ["campaign", "campaign_name", "campaignname"],
+    "campaign_type": ["campaign_type", "campaigntype", "type",
+                      "advertising_channel_type"],
+    "spend": ["spend", "cost", "amount_spent", "ad_spend", "budget", "media_cost"],
+    "revenue": ["revenue", "conv_value", "conversion_value", "conversions_value",
+                "purchase_value", "total_revenue", "sales", "conv_val"],
+    "conversions": ["conversions", "conversion", "purchases", "transactions", "orders"],
 }
 
-# source/medium -> normalized channel
-CHANNEL_RULES: list[tuple[str, str, str]] = [
-    ("google", "cpc", "google"),
-    ("bing", "cpc", "microsoft"),
-    ("microsoft", "cpc", "microsoft"),
-    ("facebook", "paid", "meta"),
-    ("meta", "paid", "meta"),
-    ("instagram", "paid", "meta"),
+# Map free-text platform/source tokens to a normalized channel.
+CHANNEL_ALIASES: dict[str, str] = {
+    "google": "google", "google ads": "google", "googleads": "google",
+    "adwords": "google",
+    "bing": "microsoft", "microsoft": "microsoft", "msft": "microsoft",
+    "microsoft ads": "microsoft",
+    "meta": "meta", "facebook": "meta", "fb": "meta", "instagram": "meta",
+    "meta ads": "meta",
+}
+
+# Infer channel from the file name when there is no channel column
+# (ad-platform exports are commonly one file per platform).
+FILENAME_CHANNEL_HINTS: list[tuple[str, str]] = [
+    ("google", "google"), ("adwords", "google"),
+    ("bing", "microsoft"), ("microsoft", "microsoft"), ("msft", "microsoft"),
+    ("meta", "meta"), ("facebook", "meta"), ("instagram", "meta"), ("fb", "meta"),
 ]
 
 

@@ -14,8 +14,9 @@ def main(argv=None) -> int:
 
     _ = features.read_features(args.features)   # validated upstream; reserved for refits
     fc = BayesianForecaster.load(args.model)
-    series_meta = {s["campaign"]: {"channel": s["channel"],
-                                   "campaign_type": s["campaign_type"]}
+    series_meta = {f'{s["channel"]}::{s["campaign"]}':
+                   {"channel": s["channel"], "campaign_type": s["campaign_type"],
+                    "campaign": s["campaign"]}
                    for s in fc.model.series}
 
     by_horizon = {}

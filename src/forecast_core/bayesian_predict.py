@@ -28,12 +28,14 @@ class BayesianForecaster:
         revenue_draws: dict[str, np.ndarray] = {}
         spend_totals: dict[str, float] = {}
         for s in self.model.series:
+            # Unique series id: campaign names can repeat across channels.
+            sid = s.get("series_id") or f'{s["channel"]}::{s["campaign"]}'
             # daily spend over horizon: budget override per channel else run-rate
             if budget_plan and s["channel"] in budget_plan:
                 daily_spend = float(budget_plan[s["channel"]])
             else:
                 daily_spend = float(s["recent_spend"])
-            spend_totals[s["campaign"]] = daily_spend * horizon
+            spend_totals[sid] = daily_spend * horizon
             # seasonal component per draw per day: (nd, H)
             seasonal = s["seasonal_dow"][:, dows]
             baseline = s["baseline_draws"][:, None] + seasonal      # (nd, H)
@@ -46,7 +48,7 @@ class BayesianForecaster:
             sigma = s["sigma_log"][:, None]
             noise = rng.normal(0.0, 1.0, size=mean_daily.shape) * sigma
             daily = mean_daily * np.exp(noise - 0.5 * sigma**2)
-            revenue_draws[s["campaign"]] = daily.sum(axis=1)        # (nd,)
+            revenue_draws[sid] = daily.sum(axis=1)                  # (nd,)
         return revenue_draws, spend_totals
 
     def save(self, path: str) -> None:

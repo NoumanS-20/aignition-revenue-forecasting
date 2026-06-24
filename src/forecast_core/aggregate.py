@@ -9,14 +9,20 @@ def _accumulate(groups, key, rev, spend):
 
 
 def aggregate_levels(revenue_draws, spend_totals, series_meta, paid_channels):
+    """Aggregate per-series revenue draws into level/entity/metric draws.
+
+    Inputs are keyed by a unique series id (e.g. "channel::campaign"); campaign
+    names can repeat across channels, so the campaign-level entity is qualified
+    as "channel:campaign". ROAS is a ratio of summed revenue to summed spend.
+    """
     groups: dict = {}   # (level, entity) -> (revenue_draws, spend_total)
     paid = set(paid_channels)
-    for camp, rev in revenue_draws.items():
-        m = series_meta[camp]
-        spend = float(spend_totals[camp])
-        # campaign level
-        _accumulate(groups, ("campaign", camp), rev, spend)
-        # campaign_type level
+    for sid, rev in revenue_draws.items():
+        m = series_meta[sid]
+        spend = float(spend_totals[sid])
+        # campaign level (channel-qualified so identical names don't collide)
+        _accumulate(groups, ("campaign", f'{m["channel"]}:{m["campaign"]}'), rev, spend)
+        # campaign_type level (aggregated across channels)
         _accumulate(groups, ("campaign_type", m["campaign_type"]), rev, spend)
         # channel level
         _accumulate(groups, ("channel", m["channel"]), rev, spend)

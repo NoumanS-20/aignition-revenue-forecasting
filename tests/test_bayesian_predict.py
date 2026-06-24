@@ -23,17 +23,17 @@ def test_predict_series_shapes_and_horizon_scaling():
     fc = BayesianForecaster(_toy_model())
     out30, sp30 = fc.predict_series(30, None, get_rng(0))
     out90, sp90 = fc.predict_series(90, None, get_rng(0))
-    assert out30["google_brand"].shape == (200,)
+    assert out30["google::google_brand"].shape == (200,)
     # 90-day total revenue should exceed 30-day total revenue (more days)
-    assert np.median(out90["google_brand"]) > np.median(out30["google_brand"])
-    assert sp90["google_brand"] > sp30["google_brand"]
+    assert np.median(out90["google::google_brand"]) > np.median(out30["google::google_brand"])
+    assert sp90["google::google_brand"] > sp30["google::google_brand"]
 
 
 def test_budget_increase_raises_revenue_but_saturates():
     fc = BayesianForecaster(_toy_model())
     base, _ = fc.predict_series(30, {"google": 100.0}, get_rng(0))
     more, _ = fc.predict_series(30, {"google": 300.0}, get_rng(0))
-    assert np.median(more["google_brand"]) > np.median(base["google_brand"])
+    assert np.median(more["google::google_brand"]) > np.median(base["google::google_brand"])
 
 
 def test_save_load_roundtrip(tmp_path):
@@ -43,4 +43,4 @@ def test_save_load_roundtrip(tmp_path):
     fc2 = BayesianForecaster.load(str(p))
     a, _ = fc.predict_series(30, None, get_rng(0))
     b, _ = fc2.predict_series(30, None, get_rng(0))
-    assert np.allclose(a["google_brand"], b["google_brand"])
+    assert np.allclose(a["google::google_brand"], b["google::google_brand"])

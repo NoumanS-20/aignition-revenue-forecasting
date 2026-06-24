@@ -4,7 +4,7 @@ from forecast_core import ingest, features
 def test_build_feature_frame_is_daily_unique(sample_data_dir):
     raw = ingest.load_data(sample_data_dir)
     feats = features.build_feature_frame(raw)
-    keys = ["date", "campaign"]
+    keys = ["date", "channel", "campaign"]
     assert not feats.duplicated(subset=keys).any()
     assert {"dow", "week_index"}.issubset(feats.columns)
     assert feats["dow"].between(0, 6).all()

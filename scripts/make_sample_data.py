@@ -5,10 +5,12 @@ import numpy as np
 import pandas as pd
 from forecast_core.config import get_rng
 
-CHANNELS = [
-    ("google", "cpc", ["brand", "nonbrand", "shopping"]),
-    ("bing", "cpc", ["brand", "nonbrand"]),
-    ("facebook", "paid", ["prospecting", "retargeting"]),
+# One file per ad platform (channel inferred from the file name), each with
+# columns: date, campaign, campaign_type, spend, revenue, conversions. All USD.
+PLATFORMS = [
+    ("google_ads.csv", ["brand", "nonbrand", "shopping"]),
+    ("microsoft_ads.csv", ["brand", "nonbrand"]),
+    ("meta_ads.csv", ["prospecting", "retargeting"]),
 ]
 
 
@@ -16,8 +18,8 @@ def generate(out_dir: str, n_days: int = 180, seed: int = 42) -> None:
     rng = get_rng(seed)
     os.makedirs(out_dir, exist_ok=True)
     dates = pd.date_range("2025-01-01", periods=n_days, freq="D")
-    rows = []
-    for source, medium, ctypes in CHANNELS:
+    for fname, ctypes in PLATFORMS:
+        rows = []
         for ctype in ctypes:
             base = rng.uniform(200, 800)
             spend_lvl = rng.uniform(50, 300)
@@ -28,18 +30,13 @@ def generate(out_dir: str, n_days: int = 180, seed: int = 42) -> None:
                 rev = max(0.0, rev * rng.uniform(0.85, 1.15))
                 rows.append({
                     "date": d.strftime("%Y-%m-%d"),
-                    "source": source, "medium": medium,
-                    "campaign": f"{source}_{ctype}",
+                    "campaign": f"{ctype}_us",
+                    "campaign_type": ctype,
+                    "spend": round(spend, 2),
                     "revenue": round(rev, 2),
                     "conversions": int(max(0, rev / 50)),
-                    "spend": round(spend, 2),
                 })
-    ga4 = pd.DataFrame(rows)
-    ga4.to_csv(os.path.join(out_dir, "ga4.csv"), index=False)
-    shop = (ga4.groupby("date")["revenue"].sum().reset_index()
-            .rename(columns={"revenue": "total_sales"}))
-    shop["orders"] = (shop["total_sales"] / 60).astype(int)
-    shop.to_csv(os.path.join(out_dir, "shopify.csv"), index=False)
+        pd.DataFrame(rows).to_csv(os.path.join(out_dir, fname), index=False)
 
 
 if __name__ == "__main__":
