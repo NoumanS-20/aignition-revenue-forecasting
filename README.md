@@ -36,6 +36,13 @@ pip install -r requirements-train.txt
 python train.py --data-dir data --out pickle/model.pkl --method bayesian --draws 1000
 ```
 
+> **Note:** the Bayesian fit uses PyMC/pytensor, which compiles C++ at runtime and
+> therefore needs a working C/C++ toolchain. It runs cleanly on Linux/macOS (and
+> Google Colab). On Windows without a configured compiler, either run it under WSL
+> or disable compilation with `PYTENSOR_FLAGS="cxx="` (slower). The committed
+> `pickle/model.pkl` is built with the dependency-free `--method fallback` so the
+> repo runs out of the box on any machine, including the scored pipeline.
+
 ## Demo app
 
 ```bash
