@@ -34,7 +34,14 @@ python train.py --data-dir data/sample --out pickle/model.pkl --method fallback
 # Full hierarchical Bayesian fit:
 pip install -r requirements-train.txt
 python train.py --data-dir data --out pickle/model.pkl --method bayesian --draws 1000
+
+# Or use the one-shot helper (installs deps, fits, verifies run.sh):
+bash scripts/train_bayesian.sh data 1000
 ```
+
+> **Easiest path:** open [`notebooks/train_bayesian_colab.ipynb`](notebooks/train_bayesian_colab.ipynb)
+> in Google Colab — it clones the repo, installs PyMC, fits the model, verifies the
+> scored pipeline, and downloads `model.pkl`, all on a Linux box where PyMC compiles.
 
 > **Note:** the Bayesian fit uses PyMC/pytensor, which compiles C++ at runtime and
 > therefore needs a working C/C++ toolchain. It runs cleanly on Linux/macOS (and
