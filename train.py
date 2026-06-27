@@ -1,16 +1,13 @@
 from __future__ import annotations
 import argparse
 import os
+import collections
 import numpy as np
 import pandas as pd
 from forecast_core import ingest, features
 from forecast_core.response_curves import fit_hill
 from forecast_core.bayesian_predict import CompiledModel, BayesianForecaster
-from forecast_core.config import get_rng, SEED
-
-
-def _series_table(feats: pd.DataFrame):
-    return feats.groupby(["channel", "campaign_type", "campaign"], sort=True)
+from forecast_core.config import get_rng, SEED, PAID_CHANNELS
 
 
 def _finite(x: float, default: float) -> float:
@@ -18,82 +15,110 @@ def _finite(x: float, default: float) -> float:
     return x if np.isfinite(x) else float(default)
 
 
+def _group_point_estimates(frame: pd.DataFrame):
+    """Estimate relative seasonality, Hill shape, and noise from a group's
+    campaigns, normalizing each campaign by its own mean so they pool/transfer."""
+    pairs_x, pairs_y = [], []          # normalized (spend, revenue) for Hill shape
+    dow_vals = {d: [] for d in range(7)}
+    logr = []
+    for _, gc in frame.groupby("campaign"):
+        d = gc.groupby("date").agg(rev=("revenue", "sum"), spend=("spend", "sum"))
+        mr = float(d["rev"].mean())
+        if not np.isfinite(mr) or mr <= 0:
+            continue
+        yn = (d["rev"] / mr).to_numpy()
+        for dd, yy in zip(d.index.dayofweek.to_numpy(), yn):
+            dow_vals[int(dd)].append(float(yy))
+        logr.extend(np.log(np.clip(yn, 1e-3, None)).tolist())
+        ms = float(d["spend"].mean())
+        if np.isfinite(ms) and ms > 0:
+            xn = (d["spend"] / ms).to_numpy()
+            pairs_x.extend(xn.tolist())
+            pairs_y.extend(yn.tolist())
+
+    seas = np.array([(np.mean(dow_vals[d]) if dow_vals[d] else 1.0) for d in range(7)])
+    seas = seas / (seas.mean() if seas.mean() > 0 else 1.0)
+
+    kappa_rel, slope = 2.0, 1.0
+    if len(pairs_x) >= 8:
+        hp = fit_hill(np.array(pairs_x), np.clip(np.array(pairs_y), 0, None), get_rng(SEED))
+        kappa_rel = min(max(_finite(hp["kappa"], 2.0), 0.1), 20.0)
+        slope = min(max(_finite(hp["slope"], 1.0), 0.3), 3.0)
+
+    sigma = _finite(np.std(logr), 0.2) if len(logr) > 2 else 0.2
+    sigma = min(max(sigma, 0.05), 1.0)
+    return seas, kappa_rel, slope, sigma
+
+
+def _draws_from_estimates(seas, kappa_rel, slope, sigma, n_draws, rng) -> dict:
+    return {
+        "seasonal_mult": seas[None, :] * np.exp(rng.normal(0, 0.05, (n_draws, 7))),
+        "kappa_rel": np.clip(kappa_rel * np.exp(rng.normal(0, 0.20, n_draws)), 0.05, None),
+        "slope": np.clip(slope + rng.normal(0, 0.10, n_draws), 0.2, 4.0),
+        "sigma_log": np.full(n_draws, sigma),
+    }
+
+
+def _build_groups(feats, n_draws, rng, draws_fn):
+    groups, channel_groups = {}, {}
+    for (ch, ct), g in feats.groupby(["channel", "campaign_type"]):
+        groups[(ch, ct)] = draws_fn(g, n_draws, rng)
+    for ch, g in feats.groupby("channel"):
+        channel_groups[ch] = draws_fn(g, n_draws, rng)
+    global_group = draws_fn(feats, n_draws, rng)
+    last_date = str(pd.to_datetime(feats["date"]).max().date())
+    return CompiledModel(groups=groups, channel_groups=channel_groups,
+                         global_group=global_group, n_draws=n_draws,
+                         last_date=last_date, paid_channels=PAID_CHANNELS)
+
+
 def fit_fallback(feats: pd.DataFrame, n_draws: int, rng) -> CompiledModel:
-    series = []
-    last_date = str(feats["date"].max().date())
-    for (channel, ctype, camp), g in _series_table(feats):
-        daily_rev = g.groupby("date")["revenue"].sum()
-        daily_spend = g.groupby("date")["spend"].sum()
-        base = _finite(daily_rev.mean(), 0.0)
-        # std is NaN for single-row series; floor it so draws stay finite.
-        base_sd = _finite(daily_rev.std(), 0.0)
-        if base_sd <= 0:
-            base_sd = max(abs(base) * 0.1, 1.0)
-        # seasonal day-of-week deviations from the series mean
-        dow_mean = g.groupby(g["date"].dt.dayofweek)["revenue"].mean()
-        seasonal = np.array([_finite(dow_mean.get(d, base), base) - base
-                             for d in range(7)])
-        hp = fit_hill(daily_spend.to_numpy(),
-                      np.clip(daily_rev.to_numpy() - base, 0, None), rng)
-        alpha = _finite(hp["alpha"], 0.0)
-        series.append({
-            "channel": channel, "campaign_type": ctype, "campaign": camp,
-            "baseline_draws": rng.normal(base, base_sd, n_draws),
-            "seasonal_dow": seasonal[None, :] + rng.normal(
-                0, abs(base_sd) * 0.1 + 1e-6, (n_draws, 7)),
-            "hill": {"alpha": rng.normal(alpha, abs(alpha) * 0.1 + 1e-6, n_draws),
-                     "kappa": np.full(n_draws, _finite(hp["kappa"], 1.0)),
-                     "slope": np.full(n_draws, _finite(hp["slope"], 1.0))},
-            "sigma_log": np.full(n_draws, 0.1),
-            "recent_spend": _finite(daily_spend.tail(14).mean(), 0.0),
-        })
-    return CompiledModel(series=series, n_draws=n_draws, last_date=last_date,
-                         calibration={})
+    def draws_fn(g, nd, rng_):
+        seas, kappa_rel, slope, sigma = _group_point_estimates(g)
+        return _draws_from_estimates(seas, kappa_rel, slope, sigma, nd, rng_)
+    return _build_groups(feats, n_draws, rng, draws_fn)
 
 
 def fit_bayesian(feats: pd.DataFrame, draws: int = 1000, tune: int = 1000) -> CompiledModel:
-    """Full hierarchical fit. Requires requirements-train.txt (PyMC)."""
+    """Bayesian day-of-week seasonality + noise per group (requires PyMC; runs on
+    Linux/Colab). The saturation shape is fit deterministically, since response
+    curves are weakly identified and full MMM is out of scope."""
     import pymc as pm  # imported lazily so the scored path never needs PyMC
-
-    series = []
-    last_date = str(feats["date"].max().date())
     n_draws = draws * 2  # 2 chains
-    for (channel, ctype, camp), g in _series_table(feats):
-        d = g.groupby("date").agg(revenue=("revenue", "sum"),
-                                  spend=("spend", "sum")).reset_index()
-        y = d["revenue"].to_numpy()
-        spend = d["spend"].to_numpy()
-        dow = d["date"].dt.dayofweek.to_numpy()
+
+    def draws_fn(g, nd, rng_):
+        seas_pt, kappa_rel, slope, sigma_pt = _group_point_estimates(g)
+        # Build normalized daily revenue with day-of-week index across campaigns.
+        ys, dows = [], []
+        for _, gc in g.groupby("campaign"):
+            d = gc.groupby("date").agg(rev=("revenue", "sum"))
+            mr = float(d["rev"].mean())
+            if not np.isfinite(mr) or mr <= 0:
+                continue
+            ys.extend((d["rev"] / mr).clip(lower=1e-3).tolist())
+            dows.extend(d.index.dayofweek.tolist())
+        if len(ys) < 14:
+            return _draws_from_estimates(seas_pt, kappa_rel, slope, sigma_pt, nd, rng_)
+        ys = np.asarray(ys); dows = np.asarray(dows)
         with pm.Model():
-            base = pm.Normal("base", mu=float(y.mean()), sigma=float(y.std() + 1.0))
-            s_dow = pm.Normal("s_dow", 0.0, sigma=float(y.std() + 1.0), shape=7)
-            alpha = pm.HalfNormal("alpha", sigma=float(max(y.max(), 1.0)))
-            kappa = pm.HalfNormal("kappa", sigma=float(
-                max(np.median(spend[spend > 0]) if (spend > 0).any() else 1.0, 1.0)))
-            slope = pm.TruncatedNormal("slope", mu=1.0, sigma=0.5, lower=0.1, upper=5.0)
+            dow = pm.Normal("dow", mu=0.0, sigma=0.3, shape=7)
             sigma = pm.HalfNormal("sigma", sigma=0.5)
-            incr = alpha * spend**slope / (kappa**slope + spend**slope + 1e-9)
-            mu = pm.math.log(pm.math.clip(base + s_dow[dow] + incr, 1e-6, np.inf))
-            pm.Lognormal("obs", mu=mu, sigma=sigma, observed=np.clip(y, 1e-6, None))
+            mu = dow[dows]
+            pm.Lognormal("obs", mu=mu, sigma=sigma, observed=ys)
             idata = pm.sample(draws=draws, tune=tune, chains=2, cores=1,
                               random_seed=SEED, progressbar=False)
         post = idata.posterior
-
-        def flat(name):
-            return post[name].to_numpy().reshape(-1, *post[name].shape[2:])
-
-        n_draws = flat("base").shape[0]
-        series.append({
-            "channel": channel, "campaign_type": ctype, "campaign": camp,
-            "baseline_draws": flat("base"),
-            "seasonal_dow": flat("s_dow"),
-            "hill": {"alpha": flat("alpha"), "kappa": flat("kappa"),
-                     "slope": flat("slope")},
-            "sigma_log": flat("sigma"),
-            "recent_spend": float(d["spend"].tail(14).mean() or 0.0),
-        })
-    return CompiledModel(series=series, n_draws=n_draws, last_date=last_date,
-                         calibration={})
+        dow_draws = np.exp(post["dow"].to_numpy().reshape(-1, 7))      # (nd,7) multipliers
+        dow_draws = dow_draws / dow_draws.mean(axis=1, keepdims=True)
+        sig_draws = post["sigma"].to_numpy().reshape(-1)
+        nd2 = dow_draws.shape[0]
+        return {
+            "seasonal_mult": dow_draws,
+            "kappa_rel": np.clip(kappa_rel * np.exp(rng_.normal(0, 0.2, nd2)), 0.05, None),
+            "slope": np.clip(slope + rng_.normal(0, 0.1, nd2), 0.2, 4.0),
+            "sigma_log": sig_draws,
+        }
+    return _build_groups(feats, n_draws, get_rng(SEED), draws_fn)
 
 
 def main(argv=None) -> int:
@@ -110,7 +135,8 @@ def main(argv=None) -> int:
         model = fit_fallback(feats, n_draws=2000, rng=get_rng(SEED))
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     BayesianForecaster(model).save(args.out)
-    print(f"[train] {args.method} model with {len(model.series)} series -> {args.out}")
+    print(f"[train] {args.method} model: {len(model.groups)} (channel,type) groups, "
+          f"{len(model.channel_groups)} channels -> {args.out}")
     return 0
 
 

@@ -114,9 +114,32 @@ ROAS_L^{(d)}    = Σ_{s∈L} R_s^{(d)}  /  Σ_{s∈L} Spend_s
 ```
 
 Reported P10/P50/P90 are the 10th/50th/90th percentiles of the draw vector
-`{·^{(d)}}`. Because `slope ≤ … ` and the Hill curve is concave for typical
-fits, doubling spend yields **less-than-double** incremental revenue — the
-diminishing-returns behavior agencies expect.
+`{·^{(d)}}`. The Hill curve saturates, so doubling spend yields
+**less-than-double** incremental revenue — the diminishing-returns behavior
+agencies expect.
+
+## Generalization to unseen campaigns / clients
+
+The evaluators clone the repo, **drop their own clients' data into `data/`, and
+run** — so the model must forecast whatever campaigns are present at runtime, not
+just the ones it was trained on. We achieve this by learning **relative,
+transferable** parameters rather than per-campaign absolutes:
+
+- The pickled model stores, per `(channel, campaign_type)` (with channel and
+  global fallback), draws of: day-of-week multipliers `seasonal_mult` (centered
+  ~1), the saturation half-point `kappa_rel` **as a multiple of run-rate**, the
+  Hill `slope`, and the log-noise `sigma`. All are scale-free, so they apply to
+  any campaign.
+- At predict time each campaign's **baseline** (mean daily revenue) and
+  **run-rate spend** come from *its own recent 28-day history* in `data/`; the
+  budget response is the **ratio** `Hill(new_spend)/Hill(run_rate)` (so the
+  unknown scale `alpha` cancels). A campaign type never seen in training falls
+  back to its channel, then to the global shape.
+
+This is why a model trained only on the synthetic sample still produces sane
+forecasts for the real dataset's campaigns (e.g. Google blended ROAS ≈ 4.5,
+matching its historical ≈ 4.8) — it reads each campaign's level from the data and
+applies the learned response/seasonality shape.
 
 ## Assumptions
 

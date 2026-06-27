@@ -1,22 +1,24 @@
 from __future__ import annotations
 import numpy as np
 from forecast_core.bayesian_predict import BayesianForecaster
-from forecast_core import aggregate, output_schema
+from forecast_core import ingest, features, aggregate, output_schema
 from forecast_core.config import get_rng, PAID_CHANNELS
 
 
 class ForecastService:
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, data_dir: str = "data/sample"):
         self.fc = BayesianForecaster.load(model_path)
-        self.series_meta = {f'{s["channel"]}::{s["campaign"]}':
-                            {"channel": s["channel"],
-                             "campaign_type": s["campaign_type"],
-                             "campaign": s["campaign"]}
-                            for s in self.fc.model.series}
+        self.paid = getattr(self.fc.model, "paid_channels", PAID_CHANNELS)
+        self.set_data_dir(data_dir)
+
+    def set_data_dir(self, data_dir: str) -> None:
+        """(Re)load the features the forecasts run on (e.g. after an upload)."""
+        self.feats = features.build_feature_frame(ingest.load_data(data_dir))
 
     def _agg(self, horizon, budget_plan):
-        rev, spend = self.fc.predict_series(horizon, budget_plan, get_rng())
-        return aggregate.aggregate_levels(rev, spend, self.series_meta, PAID_CHANNELS)
+        rev, spend, meta = self.fc.predict_from_features(
+            self.feats, horizon, budget_plan, get_rng())
+        return aggregate.aggregate_levels(rev, spend, meta, self.paid)
 
     def forecast(self, horizon: int, budget_plan) -> list[dict]:
         df = output_schema.build_predictions({horizon: self._agg(horizon, budget_plan)})
@@ -29,14 +31,16 @@ class ForecastService:
         def med(d, key):
             return float(np.nanmedian(d[key])) if key in d else None
 
+        # per-channel recent spend + revenue p50 (drives the causal narrative)
+        recent = self.feats.copy()
+        chan_spend = recent.groupby("channel")["spend"].sum().to_dict()
         series_status = []
-        for s in self.fc.model.series:
-            rs = float(s["recent_spend"])
-            kappa = float(np.median(s["hill"]["kappa"]))
+        for ch in sorted(set(self.feats["channel"])):
             series_status.append({
-                "channel": s["channel"], "campaign": s["campaign"],
-                "recent_spend": rs, "half_saturation": kappa,
-                "saturation": "saturated" if rs > kappa else "has_headroom",
+                "channel": ch,
+                "recent_spend": float(chan_spend.get(ch, 0.0)),
+                "revenue_p50": med(base, ("channel", ch, "revenue")),
+                "roas_p50": med(base, ("channel", ch, "roas")),
             })
         return {
             "horizon_days": horizon,

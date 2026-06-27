@@ -31,6 +31,12 @@ async def upload(files: list[UploadFile] = File(...)):
         dest = os.path.join(_UPLOAD_DIR, os.path.basename(f.filename))
         with open(dest, "wb") as out:
             shutil.copyfileobj(f.file, out)
+    # forecast on the uploaded data from now on
+    try:
+        _svc.set_data_dir(_UPLOAD_DIR)
+    except Exception as exc:  # noqa: BLE001 - surface bad uploads to the client
+        return {"saved": [f.filename for f in files], "dir": _UPLOAD_DIR,
+                "warning": f"could not load uploaded data: {exc}"}
     return {"saved": [f.filename for f in files], "dir": _UPLOAD_DIR}
 
 

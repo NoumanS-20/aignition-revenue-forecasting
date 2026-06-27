@@ -13,15 +13,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _make_model(path):
     rng = get_rng(1)
     nd = 100
-    series = [{
-        "channel": "google", "campaign_type": "brand", "campaign": "google_brand",
-        "baseline_draws": rng.normal(300, 10, nd),
-        "seasonal_dow": rng.normal(0, 1, (nd, 7)),
-        "hill": {"alpha": rng.normal(150, 5, nd), "kappa": np.full(nd, 200.0),
-                 "slope": np.full(nd, 1.2)},
-        "sigma_log": np.full(nd, 0.05), "recent_spend": 100.0,
-    }]
-    BayesianForecaster(CompiledModel(series, nd, "2025-06-30", {})).save(path)
+    grp = {"seasonal_mult": np.ones((nd, 7)) * np.exp(rng.normal(0, 0.01, (nd, 7))),
+           "kappa_rel": np.full(nd, 2.0), "slope": np.full(nd, 1.0),
+           "sigma_log": np.full(nd, 0.05)}
+    model = CompiledModel(groups={}, channel_groups={}, global_group=grp,
+                          n_draws=nd, last_date="2025-06-30")
+    BayesianForecaster(model).save(path)
 
 
 def test_predict_cli_writes_valid_predictions(tmp_path, sample_data_dir):
