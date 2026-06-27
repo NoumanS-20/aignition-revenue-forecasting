@@ -14,3 +14,4 @@ frontend/.next/
 !data/sample/
 
 .playwright-mcp/
+data_real/
