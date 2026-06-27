@@ -2,7 +2,15 @@ from __future__ import annotations
 import glob
 import os
 import pandas as pd
-from .config import COLUMN_MAP, CHANNEL_ALIASES, FILENAME_CHANNEL_HINTS
+from .config import COLUMN_MAP, MICROS_COLUMNS, CHANNEL_ALIASES, FILENAME_CHANNEL_HINTS
+
+
+def normalize_campaign_type(value: str) -> str:
+    """Normalize campaign-type labels so platforms align (e.g. PerformanceMax,
+    PERFORMANCE_MAX -> performance_max; SEARCH/Search -> search)."""
+    t = str(value).strip().lower().replace(" ", "_").replace("-", "_")
+    t = t.replace("performancemax", "performance_max")
+    return t or "all"
 
 
 def resolve_column(df_columns, candidates):
@@ -66,13 +74,18 @@ def _normalize_frame(path: str, df: pd.DataFrame) -> pd.DataFrame | None:
         out["channel"] = channel_from_filename(path)
     out["campaign"] = df[camp_c].astype(str) if camp_c is not None else out["channel"]
     if ctype_c is not None:
-        out["campaign_type"] = df[ctype_c].astype(str)
+        out["campaign_type"] = df[ctype_c].map(normalize_campaign_type)
     else:
-        out["campaign_type"] = out["campaign"].str.split("_").str[-1].fillna("all")
+        # No campaign-type column (e.g. Meta): derive from the campaign name token.
+        out["campaign_type"] = (out["campaign"].str.split("_").str[0]
+                                .map(normalize_campaign_type))
     out["revenue"] = (pd.to_numeric(df[rev_c], errors="coerce").fillna(0.0)
                       if rev_c is not None else 0.0)
-    out["spend"] = (pd.to_numeric(df[spend_c], errors="coerce").fillna(0.0)
-                    if spend_c is not None else 0.0)
+    spend = (pd.to_numeric(df[spend_c], errors="coerce").fillna(0.0)
+             if spend_c is not None else 0.0)
+    if spend_c is not None and str(spend_c).lower() in MICROS_COLUMNS:
+        spend = spend / 1_000_000.0   # micros -> currency units
+    out["spend"] = spend
     out["conversions"] = (pd.to_numeric(df[conv_c], errors="coerce").fillna(0.0)
                           if conv_c is not None else 0.0)
     return out

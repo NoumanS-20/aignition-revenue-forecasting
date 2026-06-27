@@ -13,29 +13,39 @@ def _series_table(feats: pd.DataFrame):
     return feats.groupby(["channel", "campaign_type", "campaign"], sort=True)
 
 
+def _finite(x: float, default: float) -> float:
+    x = float(x)
+    return x if np.isfinite(x) else float(default)
+
+
 def fit_fallback(feats: pd.DataFrame, n_draws: int, rng) -> CompiledModel:
     series = []
     last_date = str(feats["date"].max().date())
     for (channel, ctype, camp), g in _series_table(feats):
         daily_rev = g.groupby("date")["revenue"].sum()
         daily_spend = g.groupby("date")["spend"].sum()
-        base = float(daily_rev.mean())
-        base_sd = float(daily_rev.std() or base * 0.1)
-        # seasonal day-of-week deviations from mean
+        base = _finite(daily_rev.mean(), 0.0)
+        # std is NaN for single-row series; floor it so draws stay finite.
+        base_sd = _finite(daily_rev.std(), 0.0)
+        if base_sd <= 0:
+            base_sd = max(abs(base) * 0.1, 1.0)
+        # seasonal day-of-week deviations from the series mean
         dow_mean = g.groupby(g["date"].dt.dayofweek)["revenue"].mean()
-        seasonal = np.array([float(dow_mean.get(d, base)) - base for d in range(7)])
+        seasonal = np.array([_finite(dow_mean.get(d, base), base) - base
+                             for d in range(7)])
         hp = fit_hill(daily_spend.to_numpy(),
                       np.clip(daily_rev.to_numpy() - base, 0, None), rng)
+        alpha = _finite(hp["alpha"], 0.0)
         series.append({
             "channel": channel, "campaign_type": ctype, "campaign": camp,
-            "baseline_draws": rng.normal(base, max(base_sd, 1.0), n_draws),
+            "baseline_draws": rng.normal(base, base_sd, n_draws),
             "seasonal_dow": seasonal[None, :] + rng.normal(
                 0, abs(base_sd) * 0.1 + 1e-6, (n_draws, 7)),
-            "hill": {"alpha": rng.normal(hp["alpha"], hp["alpha"] * 0.1 + 1e-6, n_draws),
-                     "kappa": np.full(n_draws, hp["kappa"]),
-                     "slope": np.full(n_draws, hp["slope"])},
+            "hill": {"alpha": rng.normal(alpha, abs(alpha) * 0.1 + 1e-6, n_draws),
+                     "kappa": np.full(n_draws, _finite(hp["kappa"], 1.0)),
+                     "slope": np.full(n_draws, _finite(hp["slope"], 1.0))},
             "sigma_log": np.full(n_draws, 0.1),
-            "recent_spend": float(daily_spend.tail(14).mean() or 0.0),
+            "recent_spend": _finite(daily_spend.tail(14).mean(), 0.0),
         })
     return CompiledModel(series=series, n_draws=n_draws, last_date=last_date,
                          calibration={})

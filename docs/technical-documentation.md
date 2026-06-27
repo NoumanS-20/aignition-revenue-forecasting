@@ -72,7 +72,12 @@ values are **USD**.
    date+monetary signal are skipped rather than crashing.
 2. **Channel resolution** maps a platform/source column (or, when absent, the
    file name) to `google / microsoft / meta / other` via `CHANNEL_ALIASES` /
-   `FILENAME_CHANNEL_HINTS`.
+   `FILENAME_CHANNEL_HINTS`. Platform-specific quirks handled: Google spend is
+   given in **micros** (`metrics_cost_micros` ÷ 1e6); campaign-type labels are
+   normalized so platforms align (`PERFORMANCE_MAX`, `PerformanceMax` →
+   `performance_max`); the Meta export has **no revenue or campaign-type column**,
+   so Meta's `conversion` (conversion value) is used as revenue and its
+   campaign type is derived from the campaign name.
 3. **Validation** (`forecast_core/validate.py`) checks campaign consistency — a
    `(channel, campaign)` pair must map to a single campaign type (campaign names
    may legitimately repeat across channels) — plus non-negative revenue/spend and
@@ -117,6 +122,13 @@ diminishing-returns behavior agencies expect.
 
 - Inputs are the **ad-platform exports** (Google / Microsoft / Meta Ads) with
   spend and conversion value; GA4 and Shopify are not used. Values are **USD**.
+- **Meta revenue assumption:** the Meta export has no revenue column, so its
+  `conversion` field is treated as conversion value (revenue). Per-row
+  `conversion ÷ spend` lands at a sane ROAS (~2), supporting this reading rather
+  than a conversion count. To revise, change the `revenue` candidates in
+  `COLUMN_MAP` — a one-line edit.
+- ROAS is undefined for paused (zero-spend) campaigns, so those campaign-level
+  ROAS cells are left blank; revenue is always produced.
 - A campaign's identity is the `(channel, campaign)` pair — campaign names can
   repeat across platforms, so the whole pipeline keys series by `channel::campaign`.
 - "Total / blended" headline metrics sum the three paid channels; `campaign_type`
