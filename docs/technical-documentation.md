@@ -118,6 +118,20 @@ Reported P10/P50/P90 are the 10th/50th/90th percentiles of the draw vector
 **less-than-double** incremental revenue — the diminishing-returns behavior
 agencies expect.
 
+**Making MCMC cheap — collapsed sufficient statistics.** For the log-normal
+weekday model, the likelihood of all N daily observations collapses exactly onto
+21 numbers per group — per weekday `d`: the count `n_d`, `S1_d = Σ log y`, and
+`S2_d = Σ (log y)²`:
+
+```
+log L = Σ_d [ -n_d/2 · log(2π σ²) − (S2_d − 2 μ_d S1_d + n_d μ_d²) / (2σ²) ]
+```
+
+This is an exact algebraic identity (not an approximation), so NUTS runs in
+O(7) per iteration whether a group has 80 or 14,000 observations. In practice
+the full posterior fit over all groups completes in ~5 minutes even with
+pytensor's pure-Python backend (no C compiler needed).
+
 ## Generalization to unseen campaigns / clients
 
 The evaluators clone the repo, **drop their own clients' data into `data/`, and
@@ -172,9 +186,13 @@ applies the learned response/seasonality shape.
 - Forecasts are aggregate-period, not daily (by design and per the constraints).
 - Forecast quality depends on history length; very short histories widen
   intervals and weaken seasonality estimates.
-- The committed model is built with the no-PyMC fallback compiler for
-  out-of-the-box runs; the full Bayesian fit (`--method bayesian`) should be run
-  on the real dataset for the strongest results.
+- The committed model is the **full Bayesian (NUTS) fit on the provided
+  dataset**. Day-of-week noise is estimated on positive-revenue days only
+  (log-normal support); zero-revenue days enter the baseline mean instead, so
+  totals stay unbiased while sigma is not inflated by fake `log(0)` outliers.
+- The saturation shape (`kappa_rel`, `slope`) is point-estimated with
+  uncertainty injected around it, not sampled — response curves are weakly
+  identified from observational spend variation, and full MMM is out of scope.
 
 ## AI integration strategy
 

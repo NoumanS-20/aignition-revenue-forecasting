@@ -29,7 +29,9 @@ def _group_point_estimates(frame: pd.DataFrame):
         yn = (d["rev"] / mr).to_numpy()
         for dd, yy in zip(d.index.dayofweek.to_numpy(), yn):
             dow_vals[int(dd)].append(float(yy))
-        logr.extend(np.log(np.clip(yn, 1e-3, None)).tolist())
+        # noise is estimated on positive days only (log-normal support);
+        # zero-revenue days would otherwise inflate sigma as fake outliers
+        logr.extend(np.log(yn[yn > 0]).tolist())
         ms = float(d["spend"].mean())
         if np.isfinite(ms) and ms > 0:
             xn = (d["spend"] / ms).to_numpy()
@@ -80,31 +82,51 @@ def fit_fallback(feats: pd.DataFrame, n_draws: int, rng) -> CompiledModel:
 
 
 def fit_bayesian(feats: pd.DataFrame, draws: int = 1000, tune: int = 1000) -> CompiledModel:
-    """Bayesian day-of-week seasonality + noise per group (requires PyMC; runs on
-    Linux/Colab). The saturation shape is fit deterministically, since response
-    curves are weakly identified and full MMM is out of scope."""
+    """Bayesian day-of-week seasonality + noise per group (requires PyMC).
+
+    The log-normal likelihood with weekday means collapses exactly onto
+    sufficient statistics per weekday (count, sum of logs, sum of squared
+    logs), so each group's MCMC is O(7) regardless of how many daily
+    observations it has — full NUTS stays fast even without a C compiler.
+    The saturation shape is fit deterministically, since response curves are
+    weakly identified and full MMM is out of scope."""
     import pymc as pm  # imported lazily so the scored path never needs PyMC
     n_draws = draws * 2  # 2 chains
 
     def draws_fn(g, nd, rng_):
         seas_pt, kappa_rel, slope, sigma_pt = _group_point_estimates(g)
-        # Build normalized daily revenue with day-of-week index across campaigns.
-        ys, dows = [], []
+        # Sufficient statistics of log(normalized daily revenue) per weekday.
+        cnt = np.zeros(7)
+        s1 = np.zeros(7)   # sum of log y
+        s2 = np.zeros(7)   # sum of (log y)^2
         for _, gc in g.groupby("campaign"):
             d = gc.groupby("date").agg(rev=("revenue", "sum"))
             mr = float(d["rev"].mean())
             if not np.isfinite(mr) or mr <= 0:
                 continue
-            ys.extend((d["rev"] / mr).clip(lower=1e-3).tolist())
-            dows.extend(d.index.dayofweek.tolist())
-        if len(ys) < 14:
+            # positive-revenue days only: log-normal support; zero days belong
+            # to the baseline mean (mr), not the noise/seasonality estimate
+            pos = d["rev"].to_numpy() > 0
+            ly = np.log((d["rev"].to_numpy()[pos] / mr))
+            dws = d.index.dayofweek.to_numpy()[pos]
+            for dd in range(7):
+                m = dws == dd
+                cnt[dd] += int(m.sum())
+                s1[dd] += float(ly[m].sum())
+                s2[dd] += float((ly[m] ** 2).sum())
+        n_tot = float(cnt.sum())
+        if n_tot < 14:
             return _draws_from_estimates(seas_pt, kappa_rel, slope, sigma_pt, nd, rng_)
-        ys = np.asarray(ys); dows = np.asarray(dows)
         with pm.Model():
             dow = pm.Normal("dow", mu=0.0, sigma=0.3, shape=7)
             sigma = pm.HalfNormal("sigma", sigma=0.5)
-            mu = dow[dows]
-            pm.Lognormal("obs", mu=mu, sigma=sigma, observed=ys)
+            # Collapsed Normal log-likelihood of log-revenue given weekday means:
+            # sum_d [ -n_d/2 log(2*pi*sigma^2)
+            #         - (s2_d - 2*mu_d*s1_d + n_d*mu_d^2) / (2*sigma^2) ]
+            quad = pm.math.sum(s2 - 2.0 * dow * s1 + cnt * dow ** 2)
+            ll = (-0.5 * n_tot * pm.math.log(2.0 * np.pi * sigma ** 2)
+                  - quad / (2.0 * sigma ** 2))
+            pm.Potential("obs", ll)
             idata = pm.sample(draws=draws, tune=tune, chains=2, cores=1,
                               random_seed=SEED, progressbar=False)
         post = idata.posterior

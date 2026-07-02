@@ -30,29 +30,26 @@ Output columns: `level, entity, horizon_days, metric, p10, p50, p90`
 
 ## Retraining the model (optional, offline)
 
+The committed `pickle/model.pkl` is the **full Bayesian (NUTS) fit** on the
+provided dataset — it stores only relative (channel, campaign-type) shapes, so
+it applies to whatever campaigns are present in `data/` at run time.
+
 ```bash
-# Fast, no-PyMC fallback (used for the committed model):
-pip install -r requirements.txt && pip install -e .
+# Full Bayesian fit (used for the committed model):
+pip install -r requirements-train.txt && pip install -e .
+python train.py --data-dir data --out pickle/model.pkl --method bayesian --draws 500
+
+# Fast method-of-moments fallback (no PyMC needed):
 python train.py --data-dir data/sample --out pickle/model.pkl --method fallback
 
-# Full hierarchical Bayesian fit:
-pip install -r requirements-train.txt
-python train.py --data-dir data --out pickle/model.pkl --method bayesian --draws 1000
-
-# Or use the one-shot helper (installs deps, fits, verifies run.sh):
-bash scripts/train_bayesian.sh data 1000
+# One-shot helper (installs deps, fits, verifies run.sh):
+bash scripts/train_bayesian.sh data 500
 ```
 
-> **Easiest path:** open [`notebooks/train_bayesian_colab.ipynb`](notebooks/train_bayesian_colab.ipynb)
-> in Google Colab — it clones the repo, installs PyMC, fits the model, verifies the
-> scored pipeline, and downloads `model.pkl`, all on a Linux box where PyMC compiles.
-
-> **Note:** the Bayesian fit uses PyMC/pytensor, which compiles C++ at runtime and
-> therefore needs a working C/C++ toolchain. It runs cleanly on Linux/macOS (and
-> Google Colab). On Windows without a configured compiler, either run it under WSL
-> or disable compilation with `PYTENSOR_FLAGS="cxx="` (slower). The committed
-> `pickle/model.pkl` is built with the dependency-free `--method fallback` so the
-> repo runs out of the box on any machine, including the scored pipeline.
+> The likelihood is collapsed onto per-weekday sufficient statistics (see
+> `docs/technical-documentation.md`), so the full MCMC fit takes ~5 minutes even
+> without a C compiler (set `PYTENSOR_FLAGS="cxx="` on Windows). A Colab
+> notebook is also provided: [`notebooks/train_bayesian_colab.ipynb`](notebooks/train_bayesian_colab.ipynb).
 
 ## Demo app
 
